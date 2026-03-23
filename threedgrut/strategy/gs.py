@@ -31,6 +31,16 @@ class GSStrategy(BaseStrategy):
         self.split_n_gaussians = self.conf.strategy.densify.split.n_gaussians
         self.relative_size_threshold = self.conf.strategy.densify.relative_size_threshold
         self.prune_density_threshold = self.conf.strategy.prune.density_threshold
+        self.prune_density_threshold_final = float(
+            getattr(self.conf.strategy.prune, "density_threshold_final", self.prune_density_threshold)
+        )
+        self.prune_density_threshold_ramp_start = int(
+            getattr(self.conf.strategy.prune, "density_threshold_ramp_start", self.conf.strategy.prune.start_iteration)
+        )
+        self.prune_anisotropy_threshold = float(getattr(self.conf.strategy.prune, "anisotropy_threshold", 0.0))
+        self.prune_anisotropy_density_factor = float(
+            getattr(self.conf.strategy.prune, "anisotropy_density_factor", 2.0)
+        )
         self.clone_grad_threshold = self.conf.strategy.densify.clone_grad_threshold
         self.split_grad_threshold = self.conf.strategy.densify.split_grad_threshold
         self.new_max_density = self.conf.strategy.reset_density.new_max_density
@@ -92,7 +102,7 @@ class GSStrategy(BaseStrategy):
             self.conf.strategy.prune.end_iteration,
             self.conf.strategy.prune.frequency,
         ):
-            self.prune_gaussians_opacity()
+            self.prune_gaussians_opacity(step=step)
             scene_updated = True
 
         # Prune the Gaussians based on their scales
@@ -243,10 +253,43 @@ class GSStrategy(BaseStrategy):
         self.prune_densification_buffers(mask)
 
     def prune_gaussians_scale(self, dataset):
+        def _get_dataset_focal_max(ds) -> float:
+            # Support both legacy `intrinsic` and common `intrinsics` fields.
+            if hasattr(ds, "intrinsic"):
+                intr = ds.intrinsic
+            elif hasattr(ds, "intrinsics"):
+                intr = ds.intrinsics
+            else:
+                raise AttributeError("Dataset has neither 'intrinsic' nor 'intrinsics' attributes")
+
+            # Colmap-style: dictionary keyed by camera id
+            if isinstance(intr, dict):
+                if len(intr) == 0:
+                    raise ValueError("Dataset intrinsics dictionary is empty")
+                intr = next(iter(intr.values()))
+
+            # Tensor / ndarray matrix intrinsics
+            if torch.is_tensor(intr):
+                if intr.ndim >= 2 and intr.shape[-2:] == (3, 3):
+                    return float(torch.max(torch.stack([intr[..., 0, 0].reshape(-1), intr[..., 1, 1].reshape(-1)])).item())
+                intr = intr.detach().reshape(-1)
+                if intr.numel() >= 2:
+                    return float(torch.max(intr[:2]).item())
+                return float(torch.max(intr).item())
+
+            # Python / numpy sequence: [fx, fy, cx, cy] (or similar)
+            if hasattr(intr, "__len__") and len(intr) > 0:
+                if len(intr) >= 2:
+                    return float(max(float(intr[0]), float(intr[1])))
+                return float(intr[0])
+
+            return float(intr)
+
         cam_normals = torch.from_numpy(dataset.poses[:, :3, 2]).to(self.model.device)
         similarities = torch.matmul(self.model.positions, cam_normals.T)
         cam_dists = similarities.min(dim=1)[0].clamp(min=1e-8)
-        ratio = self.model.get_scale().min(dim=1)[0] / cam_dists * dataset.intrinsic[0].max()
+        focal_max = _get_dataset_focal_max(dataset)
+        ratio = self.model.get_scale().min(dim=1)[0] / cam_dists * focal_max
 
         # Prune the Gaussians based on their weight
         mask = ratio >= self.conf.strategy.prune_scale.threshold
@@ -264,14 +307,58 @@ class GSStrategy(BaseStrategy):
         self._update_param_with_optimizer(update_param_fn, update_optimizer_fn)
         self.prune_densification_buffers(mask)
 
-    def prune_gaussians_opacity(self):
+    def _get_current_prune_density_threshold(self, step: int) -> float:
+        start = int(self.prune_density_threshold_ramp_start)
+        end = int(self.conf.strategy.prune.end_iteration)
+        initial = float(self.prune_density_threshold)
+        final = float(self.prune_density_threshold_final)
+
+        if final <= initial:
+            return initial
+
+        if end <= 0 or end <= start:
+            return final if step >= start else initial
+
+        ramp = float(step - start) / float(end - start)
+        ramp = max(0.0, min(1.0, ramp))
+        return initial + (final - initial) * ramp
+
+    def prune_gaussians_opacity(self, step: Optional[int] = None):
         # Prune the Gaussians based on their opacity
-        mask = self.model.get_density().squeeze() >= self.prune_density_threshold
+        current_step = 0 if step is None else int(step)
+        threshold = self._get_current_prune_density_threshold(current_step)
+        densities = self.model.get_density().squeeze()
+        mask = densities >= threshold
+
+        # Additionally prune highly anisotropic and low-density Gaussians.
+        # This targets thin elongated boundary floaters that survive pure density pruning.
+        if self.prune_anisotropy_threshold > 1.0:
+            scales = self.model.get_scale()
+            max_scale = torch.max(scales, dim=1).values
+            min_scale = torch.min(scales, dim=1).values.clamp(min=1e-8)
+            anisotropy = max_scale / min_scale
+            low_density_limit = threshold * max(self.prune_anisotropy_density_factor, 1.0)
+            elongated_low_density = (anisotropy >= self.prune_anisotropy_threshold) & (densities < low_density_limit)
+            mask = mask & (~elongated_low_density)
+
+        # Keep at least one Gaussian to avoid invalid empty-scene states.
+        if not torch.any(mask):
+            keep_idx = torch.argmax(densities)
+            mask[keep_idx] = True
 
         if self.conf.strategy.print_stats:
             n_before = mask.shape[0]
             n_prune = n_before - mask.sum()
-            logger.info(f"Density-pruned {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians")
+            extra_msg = ""
+            if self.prune_anisotropy_threshold > 1.0:
+                extra_msg = (
+                    f", anisotropy>={self.prune_anisotropy_threshold:.2f} "
+                    f"and density<{threshold * max(self.prune_anisotropy_density_factor, 1.0):.6f}"
+                )
+            logger.info(
+                f"Density-pruned {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians "
+                f"(threshold={threshold:.6f}{extra_msg})"
+            )
 
         def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
             return torch.nn.Parameter(param[mask], requires_grad=param.requires_grad)

@@ -19,6 +19,10 @@ prune:
   start_iteration: 500
   end_iteration: 15000
   density_threshold: 0.005 # All Gaussians with the density lower than this will be pruned away
+  density_threshold_final: 0.02 # Final pruning threshold reached by end_iteration (helps remove low-opacity boundary floaters)
+  density_threshold_ramp_start: ${strategy.prune.start_iteration} # Iteration at which threshold starts ramping to density_threshold_final
+  anisotropy_threshold: 8.0 # Extra pruning for elongated splats: max(scale)/min(scale) above this ratio
+  anisotropy_density_factor: 2.0 # Apply anisotropy pruning only if density < density_threshold * this factor
 
 
 # Start and end iteration are not used in 3DGS
@@ -45,4 +49,4 @@ prune_scale:
   frequency: 100
   start_iteration: -1
   end_iteration: -1
-  threshold: 1.0
+  threshold: 0.5
