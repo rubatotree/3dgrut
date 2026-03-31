@@ -881,6 +881,7 @@ OptixTracer::trace(uint32_t frameNumber,
     paramsHost.minTransmittance       = minTransmittance;
     paramsHost.hitMinGaussianResponse = _state->particleKernelMinResponse;
     paramsHost.alphaMinThreshold      = 1.0f / 255.0f;
+    paramsHost.renderOpts             = renderOpts;
     paramsHost.sphDegree              = sphDegree;
 
     std::memcpy(&paramsHost.rayToWorld[0].x, rayToWorld.cpu().data_ptr<float>(), 3 * sizeof(float4));
@@ -948,6 +949,7 @@ OptixTracer::traceBwd(uint32_t frameNumber,
     paramsHost.minTransmittance       = minTransmittance;
     paramsHost.hitMinGaussianResponse = _state->particleKernelMinResponse;
     paramsHost.alphaMinThreshold      = 1.0f / 255.0f;
+    paramsHost.renderOpts             = renderOpts;
     paramsHost.sphDegree              = sphDegree;
 
     std::memcpy(&paramsHost.rayToWorld[0].x, rayToWorld.cpu().data_ptr<float>(), 3 * sizeof(float4));

@@ -20,6 +20,7 @@ enum MOGRenderOpts {
     MOGRenderAdaptiveKernelClamping = 1 << 0,
     MOGRenderWithNormals            = 1 << 1,
     MOGRenderWithHitCounts          = 1 << 2,
+    MOGRenderBackfaceCulling        = 1 << 3,
     MOGRenderDefault                = MOGRenderNone
 };
 

@@ -15,15 +15,21 @@
 
 
 import numpy as np
-import sklearn.neighbors
 import torch
 
 from threedgrut.utils.misc import to_np
 
 
+def _import_sklearn_neighbors():
+    import sklearn.neighbors
+
+    return sklearn.neighbors
+
+
 def k_nearest_neighbors(x: torch.Tensor, K: int = 4) -> torch.Tensor:
+    sklearn_neighbors = _import_sklearn_neighbors()
     x_np = x.cpu().numpy()
-    model = sklearn.neighbors.NearestNeighbors(
+    model = sklearn_neighbors.NearestNeighbors(
         n_neighbors=K,
         metric="euclidean",
     ).fit(x_np)
@@ -32,6 +38,7 @@ def k_nearest_neighbors(x: torch.Tensor, K: int = 4) -> torch.Tensor:
 
 
 def nearest_neighbors(pts_src, k=2):
+    sklearn_neighbors = _import_sklearn_neighbors()
     pts_src_np = to_np(pts_src)
 
     # distance from a point set to itself
@@ -39,7 +46,7 @@ def nearest_neighbors(pts_src, k=2):
     pts_target_np = pts_src_np
 
     # Build the tree
-    kd_tree = sklearn.neighbors.KDTree(pts_target_np)
+    kd_tree = sklearn_neighbors.KDTree(pts_target_np)
 
     # Query it
     _, neighbors = kd_tree.query(pts_src_np, k=k)
@@ -63,6 +70,7 @@ def nearest_neighbor_dist_cpuKD(pts_src, pts_target=None):
     to args computes distance from each point in src to target
     """
 
+    sklearn_neighbors = _import_sklearn_neighbors()
     pts_src_np = to_np(pts_src)
 
     if pts_target is None:
@@ -78,7 +86,7 @@ def nearest_neighbor_dist_cpuKD(pts_src, pts_target=None):
         pts_target_np = to_np(pts_target)
 
     # Build the tree
-    kd_tree = sklearn.neighbors.KDTree(pts_target_np)
+    kd_tree = sklearn_neighbors.KDTree(pts_target_np)
 
     # Query it
     _, neighbors = kd_tree.query(pts_src_np, k=k)

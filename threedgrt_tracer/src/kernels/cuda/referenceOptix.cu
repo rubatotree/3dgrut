@@ -149,10 +149,11 @@ extern "C" __global__ void __raygen__rg() {
                     &rayRadiance,
                     &rayHitDistance,
 #ifdef ENABLE_NORMALS
-                    &rayNormal
+                    &rayNormal,
 #else
-                    nullptr
+                    nullptr,
 #endif
+                    (params.renderOpts & MOGRenderBackfaceCulling) != 0
                 );
                 
                 // NOTE(qi): Race condition here, but as we are writing the same value, it seems it is safe.            

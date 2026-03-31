@@ -30,7 +30,6 @@ from threedgrut.datasets.protocols import Batch
 from threedgrut.datasets.utils import read_colmap_points3D_text, read_next_bytes
 from threedgrut.export.base import ExportableModel
 from threedgrut.export import PLYExporter
-from threedgrut.model.geometry import k_nearest_neighbors, nearest_neighbor_dist_cpuKD
 from threedgrut.optimizers import SelectiveAdam
 from threedgrut.utils.logger import logger
 from threedgrut.utils.misc import (
@@ -43,6 +42,18 @@ from threedgrut.utils.misc import (
     to_torch,
 )
 from threedgrut.utils.render import RGB2SH
+
+
+def _nearest_neighbor_dist_cpuKD(*args, **kwargs):
+    from threedgrut.model.geometry import nearest_neighbor_dist_cpuKD
+
+    return nearest_neighbor_dist_cpuKD(*args, **kwargs)
+
+
+def _k_nearest_neighbors(*args, **kwargs):
+    from threedgrut.model.geometry import k_nearest_neighbors
+
+    return k_nearest_neighbors(*args, **kwargs)
 
 
 class MixtureOfGaussians(torch.nn.Module, ExportableModel):
@@ -467,7 +478,7 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
                 (num_gaussians, num_specular_features), dtype=dtype, device=self.device
             ).contiguous()
 
-        dist = torch.clamp_min(nearest_neighbor_dist_cpuKD(fused_point_cloud), 1e-3)
+        dist = torch.clamp_min(_nearest_neighbor_dist_cpuKD(fused_point_cloud), 1e-3)
         scales = torch.log(dist * self.conf.model.default_scale_factor)[..., None].repeat(1, 3)
 
         rots = torch.rand((num_gaussians, 4), device=self.device)
@@ -526,11 +537,11 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
         if use_observer_pts:
             # NOTE: it seems we get different scales compared to the original 3DGS implementation
             # estimate scales based on distances to observers
-            dist_to_observers = torch.clamp_min(nearest_neighbor_dist_cpuKD(pts, observer_pts), 1e-7)
+            dist_to_observers = torch.clamp_min(_nearest_neighbor_dist_cpuKD(pts, observer_pts), 1e-7)
             observation_scale = dist_to_observers * self.conf.initialization.observation_scale_factor
         else:
             # Initialize the GS size to be the average dist of the 3 nearest neighbors
-            dist2_avg = (k_nearest_neighbors(pts, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
+            dist2_avg = (_k_nearest_neighbors(pts, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
             observation_scale = torch.sqrt(dist2_avg)
 
         observation_scale = observation_scale * self.conf.model.default_scale_factor

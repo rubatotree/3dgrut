@@ -44,6 +44,7 @@ struct PipelineParameters {
     float hitMinGaussianResponse;
     static constexpr float hitMaxParticleSquaredDistance = 9.f; ///< by design
     float alphaMinThreshold;
+    unsigned int renderOpts;
     unsigned int sphDegree;
 
     uint2 frameBounds;

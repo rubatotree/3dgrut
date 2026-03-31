@@ -335,7 +335,8 @@ __device__ inline bool processHit(
     float* transmittance,
     float3* radiance,
     float* depth,
-    float3* normal) {
+    float3* normal,
+    const bool backfaceCulling = false) {
     float3 particlePosition;
     float3 particleScale;
     float33 particleRotation;
@@ -365,6 +366,19 @@ __device__ inline bool processHit(
 
     const bool acceptHit = (gres > minParticleKernelDensity) && (galpha > minParticleAlpha);
     if (acceptHit) {
+        float3 hitNormal = make_float3(0.f);
+        if (normal || backfaceCulling) {
+            constexpr float ellispoidSqRadius = 9.0f;
+            const float3 particleScaleRotated = (particleRotation * particleScale);
+            hitNormal = SurfelPrimitive
+                ? make_float3(0, 0, (grd.z > 0 ? 1 : -1) * particleScaleRotated.z)
+                : safe_normalize(
+                    (gro + grd * (dot(grd, -1 * gro) - sqrtf(ellispoidSqRadius - grayDist))) * particleScaleRotated);
+            if (backfaceCulling && (dot(hitNormal, rayDirection) > 0.f)) {
+                return false;
+            }
+        }
+
         const float weight = galpha * (*transmittance);
 
         // distance to the gaussian center projection on the ray
@@ -384,9 +398,7 @@ __device__ inline bool processHit(
         *depth += hitT * weight;
 
         if (normal) {
-            constexpr float ellispoidSqRadius = 9.0f;
-            const float3 particleScaleRotated = (particleRotation * particleScale);
-            *normal += weight * (SurfelPrimitive ? make_float3(0, 0, (grd.z > 0 ? 1 : -1) * particleScaleRotated.z) : safe_normalize((gro + grd * (dot(grd, -1 * gro) - sqrtf(ellispoidSqRadius - grayDist))) * particleScaleRotated));
+            *normal += weight * hitNormal;
         }
     }
 

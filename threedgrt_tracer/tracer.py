@@ -164,6 +164,7 @@ class Tracer:
 
     class RenderOpts(IntEnum):
         NONE = 0
+        BACKFACE_CULLING = 1 << 3
         DEFAULT = NONE
 
     def __init__(self, conf):
@@ -213,13 +214,14 @@ class Tracer:
             )
             self.num_update_bvh = 0 if rebuild_bvh else self.num_update_bvh + 1
 
-    def render(self, gaussians, gpu_batch: Batch, train=False, frame_id=0):
+    def render(self, gaussians, gpu_batch: Batch, train=False, frame_id=0, render_opts=None):
         num_gaussians = gaussians.num_gaussians
         with torch.cuda.nvtx.range(f"model.forward({num_gaussians} gaussians)"):
 
             if self.frame_timer is not None:
                 self.frame_timer.start()
 
+            render_opts = Tracer.RenderOpts.DEFAULT if render_opts is None else render_opts
             (pred_rgb, pred_opacity, pred_dist, pred_normals, hits_count, mog_visibility) = Tracer._Autograd.apply(
                 self.tracer_wrapper,
                 frame_id,
@@ -231,7 +233,7 @@ class Tracer:
                 gaussians.get_scale().contiguous(),
                 gaussians.get_density().contiguous(),
                 gaussians.get_features().contiguous(),
-                Tracer.RenderOpts.DEFAULT,
+                int(render_opts),
                 gaussians.n_active_features,
                 self.conf.render.min_transmittance,
             )
